@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drug Response Prediction</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #ffffff 0%, #ffffff 100%); margin: 0; padding: 20px; min-height: 100vh; }
+    .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
+    h1 { margin-top: 0; color: #222; font-size: 28px; border-bottom: 3px solid #c0c0c0; padding-bottom: 12px; }
+    .subtitle { color: #666; margin-bottom: 24px; }
+
+    form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 16px; align-items: end; margin-bottom: 24px; }
+    label { font-weight: 600; color: #444; display: block; margin-bottom: 8px; }
+    select { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; background: #fafafa; font-size: 14px; transition: border-color 0.3s; }
+    select:focus { outline: none; border-color: #c1c1c1; background: #fff; }
+    button { padding: 12px 24px; background: linear-gradient(135deg, #38a3dc 0%, #2d86bd 100%); color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 600; transition: transform 0.2s, box-shadow 0.2s; }
+    button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(169, 169, 169, 0.4); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .loading { display: none; text-align: center; padding: 20px; color: #cccccc; }
+    .loading.active { display: block; }
+    .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #c1c1c1; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 10px; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    .result-container { margin-top: 24px; }
+    .result-card { background: linear-gradient(135deg, #e9f8fd 0%, #eff9ff 100%); border: 2px solid #c4e4f3; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+    .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .result-title { font-size: 20px; font-weight: 700; color: #0f2453; }
+    .prediction-badge { padding: 8px 16px; border-radius: 20px; font-weight: 600; font-size: 14px; }
+    .badge-sensitive { background: #4caf50; color: white; }
+    .badge-resistant { background: #f44336; color: white; }
+
+    .result-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .detail-item { background: white; padding: 12px; border-radius: 8px; }
+    .detail-label { font-size: 12px; color: #666; margin-bottom: 4px; }
+    .detail-value { font-size: 18px; font-weight: 600; color: #222; }
+
+    .probability-bar { margin-top: 16px; }
+    .prob-label { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; font-weight: 600; }
+    .prob-bar-container { height: 30px; background: #e0e0e0; border-radius: 15px; overflow: hidden; position: relative; }
+    .prob-bar { height: 100%; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 12px; }
+    .prob-bar-sensitive { background: linear-gradient(90deg, #4caf50 0%, #66bb6a 100%); }
+    .prob-bar-resistant { background: linear-gradient(90deg, #f44336 0%, #ef5350 100%); }
+
+    .error { margin-top: 18px; padding: 16px; border-radius: 8px; background: #ffecec; border: 2px solid #ffb3b3; color: #8a1f1f; }
+
+    .footer { margin-top: 32px; font-size: 12px; color: #777; text-align: center; padding-top: 16px; border-top: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧬 약물 반응 예측</h1>
+    <p class="subtitle">세포주와 약물을 선택하여 약물 민감도/내성을 예측하세요.</p>
+
+    <form id="predictForm">
+      <div>
+        <label for="cell_name">세포주 (Cell Line)</label>
+        <select id="cell_name" name="cell_name" required>
+          {% for name in cell_names %}
+            <option value="{{name}}">{{name}}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="drug_name">약물 (Drug)</label>
+        <select id="drug_name" name="drug_name" required>
+          {% for name in drug_names %}
+            <option value="{{name}}">{{name}}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <button type="submit" id="submitBtn">예측 실행</button>
+      </div>
+    </form>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <div>예측 중...</div>
+    </div>
+
+    <div class="error" id="error" style="display: none;"></div>
+
+    <div class="result-container" id="resultContainer" style="display: none;">
+      <div class="result-card">
+        <div class="result-header">
+          <div class="result-title">예측 결과</div>
+          <div class="prediction-badge" id="predictionBadge"></div>
+        </div>
+
+        <div class="result-details">
+          <div class="detail-item">
+            <div class="detail-label">세포주</div>
+            <div class="detail-value" id="resultCell">-</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">약물</div>
+            <div class="detail-value" id="resultDrug">-</div>
+          </div>
+        </div>
+
+        <div class="probability-bar">
+          <div class="prob-label">
+            <span>민감 확률 (Sensitive)</span>
+            <span id="sensitiveProb">0%</span>
+          </div>
+          <div class="prob-bar-container">
+            <div class="prob-bar prob-bar-sensitive" id="sensitiveBar" style="width: 0%;">0%</div>
+          </div>
+
+          <div class="prob-label" style="margin-top: 12px;">
+            <span>내성 확률 (Resistant)</span>
+            <span id="resistantProb">0%</span>
+          </div>
+          <div class="prob-bar-container">
+            <div class="prob-bar prob-bar-resistant" id="resistantBar" style="width: 0%;">0%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('predictForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      const formData = new FormData(this);
+      const submitBtn = document.getElementById('submitBtn');
+      const loading = document.getElementById('loading');
+      const error = document.getElementById('error');
+      const resultContainer = document.getElementById('resultContainer');
+
+      error.style.display = 'none';
+      resultContainer.style.display = 'none';
+      loading.classList.add('active');
+      submitBtn.disabled = true;
+
+      try {
+        const response = await fetch('/predict', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || '예측 중 오류가 발생했습니다.');
+        }
+
+        document.getElementById('resultCell').textContent = data.cell;
+        document.getElementById('resultDrug').textContent = data.drug;
+
+        const isSensitive = data.sensitive_prob >= 0.5;
+        const predictionBadge = document.getElementById('predictionBadge');
+        predictionBadge.textContent = data.prediction;
+        predictionBadge.className = 'prediction-badge ' + (isSensitive ? 'badge-sensitive' : 'badge-resistant');
+
+        const sensitivePercent = (data.sensitive_prob * 100).toFixed(1);
+        const resistantPercent = (data.resistance_prob * 100).toFixed(1);
+
+        document.getElementById('sensitiveProb').textContent = sensitivePercent + '%';
+        document.getElementById('resistantProb').textContent = resistantPercent + '%';
+
+        const sensitiveBar = document.getElementById('sensitiveBar');
+        const resistantBar = document.getElementById('resistantBar');
+
+        setTimeout(() => {
+          sensitiveBar.style.width = sensitivePercent + '%';
+          sensitiveBar.textContent = sensitivePercent + '%';
+          resistantBar.style.width = resistantPercent + '%';
+          resistantBar.textContent = resistantPercent + '%';
+        }, 100);
+
+        resultContainer.style.display = 'block';
+
+      } catch (err) {
+        error.textContent = err.message;
+        error.style.display = 'block';
+      } finally {
+        loading.classList.remove('active');
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
